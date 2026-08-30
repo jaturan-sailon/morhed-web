@@ -1,0 +1,40 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>หมอเห็ด – ตรวจสอบเคส</title>
+<style>body{font-family:Sarabun,system-ui,sans-serif;margin:0;background:#EFEDE6;color:#14315B}header{background:#14315B;color:#fff;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+input,select,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid #D9D6CC}button{background:#14315B;color:#fff;border:0}main{display:grid;grid-template-columns:320px 1fr;min-height:calc(100vh - 56px)}
+aside{border-right:1px solid #D9D6CC;overflow:auto;max-height:calc(100vh - 56px)}aside div{padding:10px 12px;border-bottom:1px solid #D9D6CC;cursor:pointer;font-size:14px}aside div:hover,aside div.on{background:#E1E4EA}
+section{padding:16px;overflow:auto}.imgs{display:flex;gap:8px;flex-wrap:wrap}.imgs img{height:220px;border-radius:8px;border:1px solid #D9D6CC}.org{background:#F8F7F3;border:1px solid #D9D6CC;border-radius:10px;padding:12px;margin:10px 0}
+.tag{font-size:12px;padding:2px 8px;border-radius:6px;background:#E1E4EA;margin-left:6px}.tag.expert_verified{background:#E3F3E5;color:#2E7D5B}pre{white-space:pre-wrap;font-size:12px;background:#F8F7F3;padding:8px;border-radius:8px}
+@media(max-width:800px){main{grid-template-columns:1fr}aside{max-height:40vh}}</style></head><body>
+<header><b>หมอเห็ด · ตรวจสอบเคส</b><input id="api" placeholder="https://morhed-api.xxx.workers.dev" size="34"><input id="key" placeholder="ADMIN_KEY" type="password"><select id="filter"><option value="all">ทั้งหมด</option><option value="unresolved">ยังตอบไม่ได้ (research queue)</option><option value="unlabelled">ยังไม่มี expert label</option></select><button onclick="load()">โหลด</button><button onclick="stats()" style="background:#5F6B7A">สถิติการเรียนรู้</button></header>
+<main><aside id="list"></aside><section id="view"><p>ใส่ API URL กับ ADMIN_KEY แล้วกดโหลด · การให้ label ที่นี่ = expert_verified และเป็นข้อมูลเดียวที่ใช้ฝึกโมเดล</p></section></main>
+<script>
+const $=id=>document.getElementById(id); const api=()=>$("api").value.replace(/\/$/,""); const key=()=>$("key").value;
+const OUT={diagnosed:"วินิจฉัยได้",need_more:"ขอรูปเพิ่ม",unresolved:"ยังระบุไม่ได้",identified_no_solution:"ระบุได้/ไม่มีคำแนะนำ",no_treatment:"ไม่ต้องใช้ยา"};
+async function load(){ localStorage.mh_api=api(); localStorage.mh_key=key();
+  const r=await (await fetch(`${api()}/api/admin/incidents?key=${key()}&filter=${$("filter").value}`)).json();
+  $("list").innerHTML=(r.cases||[]).map(c=>`<div onclick="open_('${c.id}',this)"><b>${OUT[c.outcome_type]||c.outcome_type}</b> · ${c.primary_organism||"—"}<br><small>${new Date(c.created_at).toLocaleString("th-TH")} · ${c.species}/${c.system}${c.outcome?` · ผล: ${c.outcome}`:""}</small></div>`).join("")||"<div>ไม่มีเคส</div>"; }
+async function open_(id,el){ [...$("list").children].forEach(x=>x.classList.remove("on")); el.classList.add("on");
+  const d=await (await fetch(`${api()}/api/admin/incident/${id}?key=${key()}`)).json(); const i=d.incident;
+  $("view").innerHTML=`<h3>${OUT[i.outcome_type]||i.outcome_type} · ${i.species}/${i.system}</h3><div class="imgs">${d.media.map(m=>`<img src="${api()}/media/${m.r2_key}?key=${key()}" title="${m.roi_hint?'มีจุดสนใจ':''}">`).join("")}</div>
+  <p><b>คำตอบเกษตรกร:</b> ${Object.entries(i.answers).map(([k,v])=>`${k}=${v}`).join(", ")||"—"} · <b>ผลติดตาม:</b> ${i.outcome||"ยังไม่ตอบ"}</p>
+  ${d.organisms.map(o=>`<div class="org"><b>${o.bucket}</b> → ${o.candidate||"ไม่ระบุ"} <span class="tag ${o.label_status}">${o.label_status}</span><br><small>features: ${o.features_json}${o.user_correction?` · เกษตรกรแก้: ${o.user_correction}`:""}${o.expert_label?` · expert: ${o.expert_label}`:""}${o.bbox_json?` · bbox(AI): ${o.bbox_json}`:""}</small><br>
+   <select id="l${o.id}">${["","not_identifiable","not_a_pest",...d.pest_ids].map(p=>`<option ${p===o.expert_label?"selected":""}>${p}</option>`).join("")}</select> <input id="n${o.id}" placeholder="หมายเหตุ" size="30"> <button onclick="label(${o.id})">ยืนยัน (expert)</button>${o.label_status==="expert_verified"?` <button style="background:#2E7D5B" onclick="promote(${o.id})">ใช้เป็นภาพอ้างอิง</button>`:""}</div>`).join("")}
+  <details><summary>ผลที่เกษตรกรเห็น / model output</summary><pre>${JSON.stringify(i.result,null,1)}</pre><pre>${JSON.stringify(i.model,null,1)}</pre></details>`; }
+async function stats(){
+  const d=await (await fetch(`${api()}/api/admin/stats?key=${key()}`)).json();
+  const fc=d.false_confident||{}; const rate=fc.named?Math.round(100*(fc.wrong||0)/fc.named):null;
+  $("view").innerHTML=`<h3>สถิติการเรียนรู้ (ไม่รวม test)</h3>
+   <p><b>เคสทั้งหมด:</b> ${d.incidents} · <b>ผลลัพธ์:</b> ${d.outcomes.map(o=>`${OUT[o.outcome_type]||o.outcome_type} ${o.n}`).join(" · ")}</p>
+   <p><b>ติดตามผล (ดีขึ้น/เท่าเดิม/แย่ลง):</b> ${d.followup.map(o=>`${o.outcome} ${o.n}`).join(" · ")||"ยังไม่มี"}</p>
+   <p><b>ตามศัตรูหลัก:</b> ${d.by_primary.map(o=>`${o.primary_organism}→${o.outcome} ${o.n}`).join(" · ")||"—"}</p>
+   <p><b>False-confident (ระบบฟันธง แต่ expert ว่าไม่ใช่):</b> ${rate===null?"ยังไม่มี expert label":rate+"% ("+fc.wrong+"/"+fc.named+")"}</p>
+   <p><b>Labels:</b> ${d.labels.map(o=>`${o.label_status} ${o.n}`).join(" · ")}</p>
+   <table style="font-size:14px;border-collapse:collapse"><tr><th align=left>bucket</th><th>seen</th><th>expert_verified</th><th>gate ≥50</th></tr>${d.per_bucket.map(b=>`<tr><td>${b.bucket}</td><td align=center>${b.n}</td><td align=center>${b.verified}</td><td align=center>${b.verified>=50?"✅":"—"}</td></tr>`).join("")}</table>
+   <p><b>Opt-in คำแนะนำเบื้องต้น:</b> ${d.provisional_optins.map(o=>`${o.pest} ${o.n}`).join(" · ")||"—"} · <b>คลิกสินค้า:</b> ${d.product_clicks.map(o=>`${o.treatment_id}/${o.vendor} ${o.n}`).join(" · ")||"—"}</p>
+   <p><b>Perceiver:</b> ${d.perceivers.map(o=>`${o.perceiver} ${o.model||""} ${o.prompt_version||""} n=${o.n} ~${o.avg_ms}ms`).join(" · ")} · shadow compared: ${d.shadow_compared}</p>`; }
+async function promote(oid){ const stage=prompt("stage: adult / larva / damage / habitat / lookalike","larva"); if(!stage) return; const cap=prompt("คำบรรยายสั้น ๆ ให้เกษตรกรดู","")||"";
+  const r=await (await fetch(`${api()}/api/admin/promote?key=${key()}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({organism_id:oid,stage,caption_th:cap})})).json(); alert(r.ok?"เพิ่มเป็นภาพอ้างอิงแล้ว":"ผิดพลาด: "+r.error); }
+async function label(oid){ const v=$("l"+oid).value; if(!v) return alert("เลือก label ก่อน");
+  await fetch(`${api()}/api/admin/label?key=${key()}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({organism_id:oid,expert_label:v,note:$("n"+oid).value})}); load(); }
+$("api").value=localStorage.mh_api||(/supabase\.co$/.test(location.hostname)?location.origin+"/functions/v1/morhed":""); $("key").value=localStorage.mh_key||"";
+</script></body></html>
